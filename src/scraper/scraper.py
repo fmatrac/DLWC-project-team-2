@@ -1,18 +1,15 @@
 import csv
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlparse
-
 from newspaper import Article
 
-INPUT_FILE = "data/raw_gdelt.csv"          # tab-delimited GDELT file
-OUTPUT_FILE = "data/scraped_articles.jsonl"
-FAILED_FILE = "data/failed_urls.jsonl"
-
-
-SLEEP_SECONDS = 0.02
 MIN_TEXT_LEN = 300
+MAX_WORKERS = 10
+SLEEP_SECONDS = 0.02
+
 
 def parse_gdelt_events(path):
     records = []
@@ -21,13 +18,10 @@ def parse_gdelt_events(path):
         for row in reader:
             if not row or len(row) < 2:
                 continue
-
             source_url = row[-1].strip()
             date_added = row[-2].strip() if len(row) >= 2 else None
-
             if not (source_url.startswith("http://") or source_url.startswith("https://")):
                 continue
-
             records.append({
                 "global_event_id": row[0].strip() if len(row) > 0 else None,
                 "day": row[1].strip() if len(row) > 1 else None,
@@ -48,14 +42,13 @@ def parse_gdelt_events(path):
             })
     return records
 
+
 def scrape_article(url, language="en"):
     article = Article(url, language=language)
     article.download()
     article.parse()
-
     text = article.text.strip() if article.text else None
     publish_date = article.publish_date.isoformat() if article.publish_date else None
-
     return {
         "final_url": article.url,
         "domain": urlparse(article.url).netloc if article.url else urlparse(url).netloc,
@@ -65,38 +58,50 @@ def scrape_article(url, language="en"):
         "top_image": article.top_image if article.top_image else None,
         "text": text,
         "status": "success" if text and len(text) >= MIN_TEXT_LEN else "too_short",
-        "error": None if text else "empty_text"
+        "error": None if text else "empty_text",
     }
 
-def main():
-    Path("data").mkdir(exist_ok=True)
 
-    gdelt_rows = parse_gdelt_events(INPUT_FILE)
+def process_url(url, linked_rows):
+    time.sleep(SLEEP_SECONDS)
+    try:
+        article_data = scrape_article(url)
+        merged = [{**row, **article_data} for row in linked_rows]
+        return merged, None
+    except Exception as e:
+        fail = {
+            "source_url": url,
+            "status": "failed",
+            "error": str(e),
+            "linked_event_ids": [r["global_event_id"] for r in linked_rows],
+        }
+        return [], fail
+
+
+def run(input_file, output_file, failed_file):
+    gdelt_rows = parse_gdelt_events(input_file)
 
     grouped_by_url = {}
     for row in gdelt_rows:
         grouped_by_url.setdefault(row["source_url"], []).append(row)
 
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as out_f, \
-         open(FAILED_FILE, "w", encoding="utf-8") as fail_f:
+    with open(output_file, "w", encoding="utf-8") as out_f, \
+         open(failed_file, "w", encoding="utf-8") as fail_f:
 
-        for i, (url, linked_rows) in enumerate(grouped_by_url.items(), start=1):
-            try:
-                article_data = scrape_article(url)
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(process_url, url, linked_rows): url
+                for url, linked_rows in grouped_by_url.items()
+            }
 
-                for row in linked_rows:
-                    merged = {**row, **article_data}
-                    out_f.write(json.dumps(merged, ensure_ascii=False) + "\n")
+            for i, future in enumerate(as_completed(futures), start=1):
+                ok_records, fail_record = future.result()
 
-            except Exception as e:
-                fail_f.write(json.dumps({
-                    "source_url": url,
-                    "status": "failed",
-                    "error": str(e),
-                    "linked_event_ids": [r["global_event_id"] for r in linked_rows]
-                }, ensure_ascii=False) + "\n")
+                for rec in ok_records:
+                    out_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                if fail_record:
+                    fail_f.write(json.dumps(fail_record, ensure_ascii=False) + "\n")
 
-            time.sleep(SLEEP_SECONDS)
-
-if __name__ == "__main__":
-    main()
+                if i % 50 == 0:
+                    out_f.flush()
+                    fail_f.flush()
