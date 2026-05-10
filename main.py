@@ -2,7 +2,9 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent / "src" / "scraper"))
+sys.path.append(str(Path(__file__).parent / "src" / "fetcher"))
 import scraper
+import fetcher
 
 INPUT_FILE  = Path("data/raw/raw_gdelt.csv")
 OUTPUT_FILE = Path("data/processed/scraped_articles.jsonl")
@@ -13,6 +15,7 @@ def main():
     Path("data/raw").mkdir(parents=True, exist_ok=True)
     Path("data/processed").mkdir(parents=True, exist_ok=True)
 
+    fetcher.fetch(output_path=INPUT_FILE)
     scraper.run(INPUT_FILE, OUTPUT_FILE, FAILED_FILE)
 
 
