@@ -35,11 +35,18 @@ def fetch_one(dt: datetime, output_path: Path) -> bool:
         print(f"[fetcher] skipped {dt.strftime('%H:%M')}: {e}")
         return False
 
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-        with zf.open(zf.namelist()[0]) as src:
-            with open(output_path, "ab") as dst:
-                shutil.copyfileobj(src, dst)
-
+    content_type = resp.headers.get("Content-Type", "")
+    if "zip" not in content_type and not resp.content[:4] == b"PK\x03\x04":
+        return False
+    
+    try:
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            with zf.open(zf.namelist()[0]) as src:
+                with open(output_path, "ab") as dst:
+                    shutil.copyfileobj(src, dst)
+    except zipfile.BadZipFile:
+        print(f"[fetcher]: skipped {dt.strftime('%H%M')}: ZIP")
+        return False
     return True
 
 
