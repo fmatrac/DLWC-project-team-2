@@ -7,8 +7,8 @@ from urllib.parse import urlparse
 from newspaper import Article
 
 MIN_TEXT_LEN = 300
-MAX_WORKERS = 10
-SLEEP_SECONDS = 0.02
+MAX_WORKERS = 80
+SLEEP_SECONDS = 0
 
 
 def parse_gdelt_events(path):
