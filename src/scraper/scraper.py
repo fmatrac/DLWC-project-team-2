@@ -4,11 +4,13 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.parse import urlparse
-from newspaper import Article
+import trafilatura
 
 MIN_TEXT_LEN = 300
 MAX_WORKERS = 80
 SLEEP_SECONDS = 0
+MIN_MENTIONS = 3
+MAX_URLS_PER_DAY = 500
 
 
 def parse_gdelt_events(path):
@@ -22,6 +24,12 @@ def parse_gdelt_events(path):
             date_added = row[-2].strip() if len(row) >= 2 else None
             if not (source_url.startswith("http://") or source_url.startswith("https://")):
                 continue
+            try:
+                num_mentions = int(row[31].strip()) if len(row) > 31 else 0
+            except ValueError:
+                num_mentions = 0
+            if num_mentions < MIN_MENTIONS:
+                continue
             records.append({
                 "global_event_id": row[0].strip() if len(row) > 0 else None,
                 "day": row[1].strip() if len(row) > 1 else None,
@@ -33,7 +41,7 @@ def parse_gdelt_events(path):
                 "event_root_code": row[28].strip() if len(row) > 28 else None,
                 "quad_class": row[29].strip() if len(row) > 29 else None,
                 "goldstein_scale": row[30].strip() if len(row) > 30 else None,
-                "num_mentions": row[31].strip() if len(row) > 31 else None,
+                "num_mentions": num_mentions,
                 "num_sources": row[32].strip() if len(row) > 32 else None,
                 "num_articles": row[33].strip() if len(row) > 33 else None,
                 "avg_tone": row[34].strip() if len(row) > 34 else None,
@@ -43,21 +51,21 @@ def parse_gdelt_events(path):
     return records
 
 
-def scrape_article(url, language="en"):
-    article = Article(url, language=language)
-    article.download()
-    article.parse()
-    text = article.text.strip() if article.text else None
-    publish_date = article.publish_date.isoformat() if article.publish_date else None
+def scrape_article(url):
+    downloaded = trafilatura.fetch_url(url)
+    if not downloaded:
+        return None
+    meta = trafilatura.extract_metadata(downloaded)
+    text = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
     return {
-        "final_url": article.url,
-        "domain": urlparse(article.url).netloc if article.url else urlparse(url).netloc,
-        "title": article.title.strip() if article.title else None,
-        "authors": article.authors if article.authors else [],
-        "published_date": publish_date,
-        "top_image": article.top_image if article.top_image else None,
-        "text": text,
-        "status": "success" if text and len(text) >= MIN_TEXT_LEN else "too_short",
+        "final_url": url,
+        "domain": urlparse(url).netloc,
+        "title": meta.title if meta and meta.title else None,
+        "authors": [meta.author] if meta and meta.author else [],
+        "published_date": meta.date if meta and meta.date else None,
+        "top_image": None,
+        "text": text.strip() if text else None,
+        "status": "success" if text and len(text.strip()) >= MIN_TEXT_LEN else "too_short",
         "error": None if text else "empty_text",
     }
 
@@ -66,6 +74,8 @@ def process_url(url, linked_rows):
     time.sleep(SLEEP_SECONDS)
     try:
         article_data = scrape_article(url)
+        if article_data is None:
+            raise RuntimeError("fetch_failed")
         merged = [{**row, **article_data} for row in linked_rows]
         return merged, None
     except Exception as e:
@@ -85,13 +95,19 @@ def run(input_file, output_file, failed_file):
     for row in gdelt_rows:
         grouped_by_url.setdefault(row["source_url"], []).append(row)
 
+    sorted_urls = sorted(
+        grouped_by_url.items(),
+        key=lambda kv: max(r["num_mentions"] for r in kv[1]),
+        reverse=True,
+    )[:MAX_URLS_PER_DAY]
+
     with open(output_file, "w", encoding="utf-8") as out_f, \
          open(failed_file, "w", encoding="utf-8") as fail_f:
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = {
                 executor.submit(process_url, url, linked_rows): url
-                for url, linked_rows in grouped_by_url.items()
+                for url, linked_rows in sorted_urls
             }
 
             for i, future in enumerate(as_completed(futures), start=1):
@@ -105,3 +121,8 @@ def run(input_file, output_file, failed_file):
                 if i % 50 == 0:
                     out_f.flush()
                     fail_f.flush()
+    ok_count   = sum(1 for l in open(output_file, encoding="utf-8") if l.strip())
+    fail_count = sum(1 for l in open(failed_file,  encoding="utf-8") if l.strip())
+    size_mb    = Path(output_file).stat().st_size / 1024 / 1024
+    url_count  = len(sorted_urls)
+    print(f"[scraper] {url_count} URLs -> {ok_count} records / {fail_count} failed, " f"{size_mb:.1f} MB -> {output_file}")
