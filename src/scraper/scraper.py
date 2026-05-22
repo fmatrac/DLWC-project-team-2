@@ -117,8 +117,8 @@ def run(input_file, output_file, failed_file):
         reverse=True,
     )[:MAX_URLS_PER_DAY]
 
-    with open(output_file, "w", encoding="utf-8") as out_f, \
-         open(failed_file, "w", encoding="utf-8") as fail_f:
+    with open(output_file, "a", encoding="utf-8") as out_f, \
+         open(failed_file, "a", encoding="utf-8") as fail_f:
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             futures = {
