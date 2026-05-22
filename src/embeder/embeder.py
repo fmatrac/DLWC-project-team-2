@@ -58,7 +58,7 @@ def _embed_and_write_batch(records, texts, out_file, model, embedding_field):
 
     for rec, vec in zip(records, vectors):
         # pick whichever date field you want; here we use `publisheddate`
-        date_value = rec.get("publisheddate") or rec.get("dateadded") or rec.get("day")
+        date_value = rec.get("published_date") or rec.get("dateadded") or rec.get("day")
 
         minimal = {
             "date": date_value,

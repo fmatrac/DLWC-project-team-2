@@ -31,7 +31,7 @@ def main():
     EMBEDED_FILE,
     embedding_field="embeddinggemma_vec",
     batch_size=64,
-)
+    )
 
 
 if __name__ == "__main__":

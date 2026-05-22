@@ -10,7 +10,7 @@ MIN_TEXT_LEN = 300
 MAX_WORKERS = 80
 SLEEP_SECONDS = 0
 MIN_MENTIONS = 3
-MAX_URLS_PER_DAY = 500
+MAX_URLS_PER_DAY = 100
 
 
 def parse_gdelt_events(path):
@@ -71,13 +71,28 @@ def scrape_article(url):
 
 
 def process_url(url, linked_rows):
+    """
+    Scrape this URL once and return a SINGLE article record.
+    We keep some aggregated info from linked_rows if you want it later.
+    """
     time.sleep(SLEEP_SECONDS)
     try:
         article_data = scrape_article(url)
         if article_data is None:
             raise RuntimeError("fetch_failed")
-        merged = [{**row, **article_data} for row in linked_rows]
+
+        # Optional: aggregate metadata from all GDELT rows that pointed to this URL
+        event_ids = [r["global_event_id"] for r in linked_rows]
+        max_mentions = max(r["num_mentions"] for r in linked_rows)
+
+        merged = {
+            **article_data,
+            "linked_event_ids": event_ids,     # you can drop this if you don't care
+            "max_num_mentions": max_mentions,  # you can also drop this
+        }
+
         return merged, None
+
     except Exception as e:
         fail = {
             "source_url": url,
@@ -85,7 +100,7 @@ def process_url(url, linked_rows):
             "error": str(e),
             "linked_event_ids": [r["global_event_id"] for r in linked_rows],
         }
-        return [], fail
+        return None, fail
 
 
 def run(input_file, output_file, failed_file):
@@ -95,6 +110,7 @@ def run(input_file, output_file, failed_file):
     for row in gdelt_rows:
         grouped_by_url.setdefault(row["source_url"], []).append(row)
 
+    # still prioritize URLs by max num_mentions, but only keep MAX_URLS_PER_DAY unique URLs
     sorted_urls = sorted(
         grouped_by_url.items(),
         key=lambda kv: max(r["num_mentions"] for r in kv[1]),
@@ -111,18 +127,24 @@ def run(input_file, output_file, failed_file):
             }
 
             for i, future in enumerate(as_completed(futures), start=1):
-                ok_records, fail_record = future.result()
+                ok_record, fail_record = future.result()
 
-                for rec in ok_records:
-                    out_f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                if ok_record:
+                    # exactly ONE JSON line per URL
+                    out_f.write(json.dumps(ok_record, ensure_ascii=False) + "\n")
+
                 if fail_record:
                     fail_f.write(json.dumps(fail_record, ensure_ascii=False) + "\n")
 
                 if i % 50 == 0:
                     out_f.flush()
                     fail_f.flush()
+
     ok_count   = sum(1 for l in open(output_file, encoding="utf-8") if l.strip())
-    fail_count = sum(1 for l in open(failed_file,  encoding="utf-8") if l.strip())
+    fail_count = sum(1 for l in open(failed_file, encoding="utf-8") if l.strip())
     size_mb    = Path(output_file).stat().st_size / 1024 / 1024
     url_count  = len(sorted_urls)
-    print(f"[scraper] {url_count} URLs -> {ok_count} records / {fail_count} failed, " f"{size_mb:.1f} MB -> {output_file}")
+    print(
+        f"[scraper] {url_count} URLs -> {ok_count} records / {fail_count} failed, "
+        f"{size_mb:.1f} MB -> {output_file}"
+    )
