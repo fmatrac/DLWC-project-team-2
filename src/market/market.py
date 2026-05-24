@@ -5,29 +5,29 @@ from pathlib import Path
 import yfinance as yf
 
 OUTPUT_PATH = Path("data/raw/raw_market.jsonl")
-DEFAULT_LOOKBACK_DAYS = 365
+DEFAULT_LOOKBACK_DAYS = 31
 INTERVAL = "1d"
 
 DEFAULT_TICKERS = [
-    "^GSPC",
-    "^DJI",
-    "^IXIC",
-    "^VIX",
+    "^GSPC"
+    # "^DJI",
+    # "^IXIC",
+    # "^VIX",
 
-    "AAPL",
-    "MSFT",
-    "GOOGL",
-    "AMZN",
-    "META",
-    "NVDA",
-    "TSLA",
+    # "AAPL",
+    # "MSFT",
+    # "GOOGL",
+    # "AMZN",
+    # "META",
+    # "NVDA",
+    # "TSLA",
 
-    "JPM",
-    "GS",
-    "BAC",
+    # "JPM",
+    # "GS",
+    # "BAC",
 
-    "XOM",
-    "CVX",
+    # "XOM",
+    # "CVX",
 ]
 
 
