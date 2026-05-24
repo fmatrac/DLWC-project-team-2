@@ -5,11 +5,7 @@ import torch.nn.functional as F
 
 
 class MarketCNN(nn.Module):
-    """
-    Treats the embedding vector (768,) as a 1D signal with 1 channel.
-    Input shape:  (B, 768)
-    Output shape: (B,)   — one predicted return per sample
-    """
+  
     def __init__(self, emb_dim: int = 768):
         super().__init__()
         self.conv1 = nn.Conv1d(in_channels=1,  out_channels=14, kernel_size=3, stride=1)
