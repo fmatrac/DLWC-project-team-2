@@ -1,4 +1,3 @@
-
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -21,16 +20,48 @@ def _load_embeddings(path: Path, field: str = "embeddinggemma_vec") -> dict[str,
     """
     by_date: dict[str, list[np.ndarray]] = defaultdict(list)
 
+    skipped_no_date = 0
+    skipped_no_vec  = 0
+    found_fields: set[str] = set()
+
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             rec = json.loads(line)
-            date = rec.get("date")
-            vec  = rec.get(field)
-            if date and vec:
-                by_date[date].append(np.array(vec, dtype=np.float32))
+
+            # Collect all keys for diagnostics
+            found_fields.update(rec.keys())
+
+            # Normalise date to YYYY-MM-DD
+            date = rec.get("date", "")
+            if not date:
+                skipped_no_date += 1
+                continue
+            date = str(date).replace("/", "-")[:10]
+
+            vec = rec.get(field)
+            if vec is None:
+                skipped_no_vec += 1
+                continue
+
+            by_date[date].append(np.array(vec, dtype=np.float32))
+
+    if skipped_no_date or skipped_no_vec:
+        print(f"[embeddings] skipped {skipped_no_date} records missing 'date', "
+              f"{skipped_no_vec} records missing field '{field}'")
+    if skipped_no_vec > 0:
+        print(f"[embeddings] available fields in file: {sorted(found_fields)}")
+    if not by_date:
+        raise ValueError(
+            f"No embedding records loaded from {path}. "
+            f"Check that field '{field}' exists. "
+            f"Fields found in file: {sorted(found_fields)}"
+        )
+
+    print(f"[embeddings] loaded {sum(len(v) for v in by_date.values())} vectors "
+          f"across {len(by_date)} dates")
 
     return {
         date: np.stack(vecs).mean(axis=0)
@@ -44,16 +75,29 @@ def _load_market(path: Path, ticker: str = "^GSPC") -> list[dict]:
     Filters to a single ticker and returns rows sorted by date.
     """
     rows = []
+    all_tickers: set[str] = set()
+
     with path.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
                 continue
             rec = json.loads(line)
+            all_tickers.add(rec.get("ticker", "<missing>"))
             if rec.get("ticker") == ticker:
+                # Normalise date to YYYY-MM-DD
+                rec["date"] = str(rec.get("date", "")).replace("/", "-")[:10]
                 rows.append(rec)
 
+    if not rows:
+        raise ValueError(
+            f"No market rows found for ticker '{ticker}' in {path}. "
+            f"Tickers present in file: {sorted(all_tickers)}"
+        )
+
     rows.sort(key=lambda r: r["date"])
+    print(f"[market] loaded {len(rows)} rows for ticker '{ticker}' "
+          f"({rows[0]['date']} → {rows[-1]['date']})")
     return rows
 
 
@@ -73,31 +117,37 @@ def _build_samples(
     Friday and Monday), they are mean-averaged with any Friday embedding
     and assigned to the Friday→Monday pair.
     """
-    trading_dates = [r["date"] for r in market_rows]
+    from datetime import date, timedelta
+
+    trading_dates    = [r["date"] for r in market_rows]
     trading_date_set = set(trading_dates)
 
     # Build a map: trading_date → list of embedding dates to aggregate
-    # Each trading day t collects: its own embedding + any non-trading
-    # days that fall between t and the previous trading day.
-    from collections import defaultdict
-    import numpy as np
-    from datetime import date, timedelta
-
     date_to_emb_dates: dict[str, list[str]] = defaultdict(list)
 
     all_emb_dates = sorted(embeddings.keys())
+    unmatched_emb_dates = 0
+
     for emb_date in all_emb_dates:
         if emb_date in trading_date_set:
             date_to_emb_dates[emb_date].append(emb_date)
         else:
             # Find the next trading day for this embedding date
             d = date.fromisoformat(emb_date)
+            matched = False
             for _ in range(7):          # look up to 7 days forward
                 d += timedelta(days=1)
                 candidate = d.isoformat()
                 if candidate in trading_date_set:
                     date_to_emb_dates[candidate].append(emb_date)
+                    matched = True
                     break
+            if not matched:
+                unmatched_emb_dates += 1
+
+    if unmatched_emb_dates:
+        print(f"[samples] {unmatched_emb_dates} embedding dates could not be "
+              f"mapped to any trading day (beyond 7-day window)")
 
     # Build aggregated embedding per trading day
     agg_embeddings: dict[str, np.ndarray] = {}
@@ -106,8 +156,26 @@ def _build_samples(
         if vecs:
             agg_embeddings[trading_date] = np.stack(vecs).mean(axis=0)
 
-    # Now build samples: feature from trading day t, label from t+1
+    print(f"[samples] trading days with aggregated embedding: {len(agg_embeddings)} "
+          f"/ {len(trading_dates)}")
+
+    # Diagnostic: show overlap between market and agg_embeddings
+    overlap = trading_date_set & set(agg_embeddings.keys())
+    print(f"[samples] market↔embedding overlap: {len(overlap)} trading days")
+    if len(overlap) == 0:
+        emb_sample    = sorted(embeddings.keys())[:3]
+        market_sample = sorted(trading_date_set)[:3]
+        print(f"[samples] sample embedding dates : {emb_sample}")
+        print(f"[samples] sample market dates    : {market_sample}")
+        raise ValueError(
+            "No overlapping dates between market and embedding files after "
+            "date normalisation. Check date formats in both files."
+        )
+
+    # Build samples: feature from trading day t, label from t+1
     X_list, y_list, meta = [], [], []
+    skipped_no_emb  = 0
+    skipped_bad_open = 0
 
     for i in range(len(market_rows) - 1):
         today = market_rows[i]
@@ -115,11 +183,13 @@ def _build_samples(
 
         emb = agg_embeddings.get(today["date"])
         if emb is None:
+            skipped_no_emb += 1
             continue
 
         open_     = float(nxt["open"])
         adj_close = float(nxt["adj_close"])
         if open_ == 0:
+            skipped_bad_open += 1
             continue
 
         label = (adj_close - open_) / open_
@@ -127,10 +197,22 @@ def _build_samples(
         X_list.append(emb)
         y_list.append(label)
         meta.append({
-            "news_date":        today["date"],
-            "target_date":      nxt["date"],
-            "emb_dates_used":   date_to_emb_dates[today["date"]],
+            "news_date":      today["date"],
+            "target_date":    nxt["date"],
+            "emb_dates_used": date_to_emb_dates[today["date"]],
         })
+
+    print(f"[samples] built {len(X_list)} samples "
+          f"(skipped {skipped_no_emb} no-embedding, {skipped_bad_open} zero-open)")
+
+    if not X_list:
+        raise ValueError(
+            f"No samples could be built. "
+            f"Trading days with embeddings: {len(agg_embeddings)}, "
+            f"but none matched t→t+1 pairs. "
+            f"Skipped due to missing embedding: {skipped_no_emb}, "
+            f"zero open price: {skipped_bad_open}."
+        )
 
     X = np.stack(X_list).astype(np.float32)
     y = np.array(y_list, dtype=np.float32)
@@ -231,15 +313,15 @@ def _time_split(
 # ──────────────────────────────────────────────────────────────
 
 def build_dataloaders(
-    market_path:    Path | str,
-    embedding_path: Path | str,
-    ticker:         str   = "^GSPC",
-    embedding_field: str  = "embeddinggemma_vec",
-    batch_size:     int   = 64,
-    train_ratio:    float = 0.70,
-    val_ratio:      float = 0.15,
-    normalize:      bool  = True,
-    num_workers:    int   = 0,
+    market_path:     Path | str,
+    embedding_path:  Path | str,
+    ticker:          str   = "^GSPC",
+    embedding_field: str   = "embeddinggemma_vec",
+    batch_size:      int   = 64,
+    train_ratio:     float = 0.70,
+    val_ratio:       float = 0.15,
+    normalize:       bool  = True,
+    num_workers:     int   = 0,
 ) -> tuple[DataLoader, DataLoader, DataLoader, dict]:
     """
     Full pipeline: load → join → split → normalize → DataLoaders.
@@ -268,12 +350,6 @@ def build_dataloaders(
 
     # 2. Join (only dates covered by GDELT)
     X, y, meta = _build_samples(market_rows, embeddings)
-
-    if len(y) == 0:
-        raise ValueError(
-            "No overlapping dates found between market and embedding files. "
-            "Check that both files cover the same date range."
-        )
 
     print(f"[dataset] {len(y)} samples | emb_dim={X.shape[1]}")
     print(f"[dataset] date range: {meta[0]['target_date']} → {meta[-1]['target_date']}")
