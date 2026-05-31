@@ -7,7 +7,7 @@ def embed_jsonl_file(
     input_path: str | Path,
     output_path: str | Path,
     model: str = "embeddinggemma",
-    embedding_field: str = "embeddinggemma_vector",
+    embedding_field: str = "embeddinggemma_vec",
     batch_size: int = 64,
 ) -> None:
     input_path = Path(input_path)
