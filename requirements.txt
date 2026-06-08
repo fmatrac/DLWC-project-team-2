@@ -3,3 +3,7 @@ trafilatura>=2.0.0
 lxml>=5.0.0
 lxml-html-clean>=0.1.0
 yfinance>=0.2.40
+scipy>=1.12.0
+scikit-learn>=1.4.0
+torch
+ollama
