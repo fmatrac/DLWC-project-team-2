@@ -39,7 +39,7 @@ def main():
 
     #files = fetcher.fetch_past_30_days()
     #fetcher.fetch(output_path=INPUT_FILE) -- stare nie działa
-    #market.fetch(output_path=MARKET_FILE)
+    market.fetch(start="2026-04-22", end="2026-05-22", output_path=MARKET_FILE)
     
     RAW_DIR = Path("data/raw")
     #def iter_daily_files(raw_dir: Path = RAW_DIR):
@@ -56,7 +56,7 @@ def main():
     #)
 
 
-    train_loader, val_loader, test_loader, info = build_dataloaders(
+    train_loader, test_loader, info = build_dataloaders(
         market_path    = MARKET_FILE,
         embedding_path = EMBEDED_FILE,
         embedding_field = EMBEDDING_FIELD
@@ -64,13 +64,21 @@ def main():
     X_train = np.vstack([batch["x"].numpy() for batch in train_loader])
     y_train = np.concatenate([batch["y"].numpy() for batch in train_loader])
 
-    run_all(X_train, y_train)
+    ticker_names = [
+    "^GSPC", "^DJI", "^IXIC", "^VIX",
+    "AAPL", "MSFT", "GOOGL", "AMZN",
+    "META", "NVDA", "TSLA",
+    "JPM", "GS", "BAC",
+    "XOM", "CVX",
+]
 
-    model = MarketCNN().to(device)
+    results = run_all(X_train, y_train, ticker_names=ticker_names)
 
-    train(model, train_loader, device=device)
+    # model = MarketCNN().to(device)
 
-    validate(model, val_loader, device)
+    # train(model, train_loader, device=device)
+
+    # validate(model, val_loader, device)
     
 
 
