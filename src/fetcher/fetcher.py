@@ -10,7 +10,7 @@ import requests
 OUTPUT_DIR = Path("data/raw")
 TIMEOUT = 30
 SNAPSHOT_INTERVAL_MINUTES = 15
-DAYS_BACK = 30
+DAYS_BACK = 90
 
 
 def build_gdelt_url(dt: datetime) -> str:

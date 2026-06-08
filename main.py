@@ -37,23 +37,23 @@ def main():
     Path("data/raw").mkdir(parents=True, exist_ok=True)
     Path("data/processed").mkdir(parents=True, exist_ok=True)
 
-    #files = fetcher.fetch_past_30_days()
+    files = fetcher.fetch_past_30_days()
     #fetcher.fetch(output_path=INPUT_FILE) -- stare nie działa
-    market.fetch(start="2026-04-22", end="2026-05-22", output_path=MARKET_FILE)
+    market.fetch(end="2026-06-08", output_path=MARKET_FILE)
     
     RAW_DIR = Path("data/raw")
-    #def iter_daily_files(raw_dir: Path = RAW_DIR):
-    #    yield from sorted(raw_dir.glob("raw_gdelt_*.csv"))
+    def iter_daily_files(raw_dir: Path = RAW_DIR):
+       yield from sorted(raw_dir.glob("raw_gdelt_*.csv"))
     
-    #for path in iter_daily_files():
-    #    scraper.run(path, OUTPUT_FILE, FAILED_FILE)
+    for path in iter_daily_files():
+       scraper.run(path, OUTPUT_FILE, FAILED_FILE)
     
-    #embeder.embed_jsonl_file(
-    #    OUTPUT_FILE,
-    #    EMBEDED_FILE,
-    #    embedding_field="embeddinggemma_vec",
-    #    batch_size=64,
-    #)
+    embeder.embed_jsonl_file(
+       OUTPUT_FILE,
+       EMBEDED_FILE,
+       embedding_field="embeddinggemma_vec",
+       batch_size=64,
+    )
 
 
     train_loader, test_loader, info = build_dataloaders(
