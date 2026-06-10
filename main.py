@@ -37,9 +37,9 @@ def main():
     Path("data/raw").mkdir(parents=True, exist_ok=True)
     Path("data/processed").mkdir(parents=True, exist_ok=True)
 
-    files = fetcher.fetch_past_30_days()
-    #fetcher.fetch(output_path=INPUT_FILE) -- stare nie działa
-    market.fetch(end="2026-06-08", output_path=MARKET_FILE)
+    # files = fetcher.fetch_past_30_days()
+    # #fetcher.fetch(output_path=INPUT_FILE) -- stare nie działa
+    # market.fetch(end="2026-06-08", output_path=MARKET_FILE)
     
     RAW_DIR = Path("data/raw")
     def iter_daily_files(raw_dir: Path = RAW_DIR):
@@ -52,7 +52,7 @@ def main():
        OUTPUT_FILE,
        EMBEDED_FILE,
        embedding_field="embeddinggemma_vec",
-       batch_size=64,
+       batch_size=256,
     )
 
 
@@ -65,12 +65,24 @@ def main():
     y_train = np.concatenate([batch["y"].numpy() for batch in train_loader])
 
     ticker_names = [
-    "^GSPC", "^DJI", "^IXIC", "^VIX",
-    "AAPL", "MSFT", "GOOGL", "AMZN",
-    "META", "NVDA", "TSLA",
-    "JPM", "GS", "BAC",
-    "XOM", "CVX",
+    "^GSPC",
+    "^DJI",
+    "^IXIC",
+    "^VIX",
+    "AAPL",
+    "MSFT",
+    "GOOGL",
+    "AMZN",
+    "META",
+    "NVDA",
+    "TSLA",
+    "JPM",
+    "GS",
+    "BAC",
+    "XOM",
+    "CVX",
 ]
+
 
     results = run_all(X_train, y_train, ticker_names=ticker_names)
 

@@ -13,6 +13,43 @@ MIN_MENTIONS = 3
 MAX_URLS_PER_DAY = 100
 
 
+# def parse_gdelt_events(path):
+#     records = []
+#     with open(path, "r", encoding="utf-8", newline="") as f:
+#         reader = csv.reader(f, delimiter="\t")
+#         for row in reader:
+#             if not row or len(row) < 2:
+#                 continue
+#             source_url = row[-1].strip()
+#             date_added = row[-2].strip() if len(row) >= 2 else None
+#             if not (source_url.startswith("http://") or source_url.startswith("https://")):
+#                 continue
+#             try:
+#                 num_mentions = int(row[31].strip()) if len(row) > 31 else 0
+#             except ValueError:
+#                 num_mentions = 0
+#             if num_mentions < MIN_MENTIONS:
+#                 continue
+#             records.append({
+#                 "global_event_id": row[0].strip() if len(row) > 0 else None,
+#                 "day": row[1].strip() if len(row) > 1 else None,
+#                 "month_year": row[2].strip() if len(row) > 2 else None,
+#                 "year": row[3].strip() if len(row) > 3 else None,
+#                 "fraction_date": row[4].strip() if len(row) > 4 else None,
+#                 "event_code": row[26].strip() if len(row) > 26 else None,
+#                 "event_base_code": row[27].strip() if len(row) > 27 else None,
+#                 "event_root_code": row[28].strip() if len(row) > 28 else None,
+#                 "quad_class": row[29].strip() if len(row) > 29 else None,
+#                 "goldstein_scale": row[30].strip() if len(row) > 30 else None,
+#                 "num_mentions": num_mentions,
+#                 "num_sources": row[32].strip() if len(row) > 32 else None,
+#                 "num_articles": row[33].strip() if len(row) > 33 else None,
+#                 "avg_tone": row[34].strip() if len(row) > 34 else None,
+#                 "date_added": date_added,
+#                 "source_url": source_url,
+#             })
+#     return records
+
 def parse_gdelt_events(path):
     records = []
     with open(path, "r", encoding="utf-8", newline="") as f:
@@ -20,22 +57,51 @@ def parse_gdelt_events(path):
         for row in reader:
             if not row or len(row) < 2:
                 continue
+
             source_url = row[-1].strip()
             date_added = row[-2].strip() if len(row) >= 2 else None
+
             if not (source_url.startswith("http://") or source_url.startswith("https://")):
                 continue
+
             try:
                 num_mentions = int(row[31].strip()) if len(row) > 31 else 0
             except ValueError:
                 num_mentions = 0
             if num_mentions < MIN_MENTIONS:
                 continue
+
+            # --- country / geo codes (indices per GDELT 2.0 event file) ---
+            actor1_cc = row[6].strip() if len(row) > 6 else ""
+            actor2_cc = row[16].strip() if len(row) > 16 else ""
+            actor1_geo_cc = row[37].strip() if len(row) > 37 else ""
+            actor2_geo_cc = row[47].strip() if len(row) > 47 else ""
+            action_geo_cc = row[57].strip() if len(row) > 57 else ""
+
+            # keep only events that concern USA
+            concerns_usa = (
+                actor1_cc == "USA" or
+                actor2_cc == "USA" or
+                actor1_geo_cc == "US" or
+                actor2_geo_cc == "US" or
+                action_geo_cc == "US"
+            )
+            if not concerns_usa:
+                continue
+
             records.append({
                 "global_event_id": row[0].strip() if len(row) > 0 else None,
                 "day": row[1].strip() if len(row) > 1 else None,
                 "month_year": row[2].strip() if len(row) > 2 else None,
                 "year": row[3].strip() if len(row) > 3 else None,
                 "fraction_date": row[4].strip() if len(row) > 4 else None,
+
+                "actor1_country": actor1_cc,
+                "actor2_country": actor2_cc,
+                "actor1_geo_country": actor1_geo_cc,
+                "actor2_geo_country": actor2_geo_cc,
+                "action_geo_country": action_geo_cc,
+
                 "event_code": row[26].strip() if len(row) > 26 else None,
                 "event_base_code": row[27].strip() if len(row) > 27 else None,
                 "event_root_code": row[28].strip() if len(row) > 28 else None,
