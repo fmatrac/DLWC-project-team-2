@@ -7,7 +7,7 @@ import yfinance as yf
 
 
 OUTPUT_PATH = Path("data/raw/raw_market.jsonl")
-DEFAULT_LOOKBACK_DAYS = 90
+DEFAULT_LOOKBACK_DAYS = 180
 INTERVAL = "1d"
 
 

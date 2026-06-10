@@ -59,10 +59,12 @@ def _embed_and_write_batch(records, texts, out_file, model, embedding_field):
     for rec, vec in zip(records, vectors):
         # pick whichever date field you want; here we use `publisheddate`
         date_value = rec.get("published_date") or rec.get("dateadded") or rec.get("day")
+        num_ment = rec.get("max_num_mentions")
 
         minimal = {
             "date": date_value,
             embedding_field: vec,
+            "num_mentions": num_ment
         }
 
         out_file.write(json.dumps(minimal, ensure_ascii=False) + "\n")
