@@ -1,59 +1,39 @@
 import csv
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from pathlib import Path
 from urllib.parse import urlparse
+
 import trafilatura
+from trafilatura.settings import DEFAULT_CONFIG
+
 
 MIN_TEXT_LEN = 300
-MAX_WORKERS = 80
+MAX_WORKERS = 16
 SLEEP_SECONDS = 0
 MIN_MENTIONS = 3
 MAX_URLS_PER_DAY = 100
+DOWNLOAD_TIMEOUT = 10
+GLOBAL_BATCH_TIMEOUT = 30
 
 
-# def parse_gdelt_events(path):
-#     records = []
-#     with open(path, "r", encoding="utf-8", newline="") as f:
-#         reader = csv.reader(f, delimiter="\t")
-#         for row in reader:
-#             if not row or len(row) < 2:
-#                 continue
-#             source_url = row[-1].strip()
-#             date_added = row[-2].strip() if len(row) >= 2 else None
-#             if not (source_url.startswith("http://") or source_url.startswith("https://")):
-#                 continue
-#             try:
-#                 num_mentions = int(row[31].strip()) if len(row) > 31 else 0
-#             except ValueError:
-#                 num_mentions = 0
-#             if num_mentions < MIN_MENTIONS:
-#                 continue
-#             records.append({
-#                 "global_event_id": row[0].strip() if len(row) > 0 else None,
-#                 "day": row[1].strip() if len(row) > 1 else None,
-#                 "month_year": row[2].strip() if len(row) > 2 else None,
-#                 "year": row[3].strip() if len(row) > 3 else None,
-#                 "fraction_date": row[4].strip() if len(row) > 4 else None,
-#                 "event_code": row[26].strip() if len(row) > 26 else None,
-#                 "event_base_code": row[27].strip() if len(row) > 27 else None,
-#                 "event_root_code": row[28].strip() if len(row) > 28 else None,
-#                 "quad_class": row[29].strip() if len(row) > 29 else None,
-#                 "goldstein_scale": row[30].strip() if len(row) > 30 else None,
-#                 "num_mentions": num_mentions,
-#                 "num_sources": row[32].strip() if len(row) > 32 else None,
-#                 "num_articles": row[33].strip() if len(row) > 33 else None,
-#                 "avg_tone": row[34].strip() if len(row) > 34 else None,
-#                 "date_added": date_added,
-#                 "source_url": source_url,
-#             })
-#     return records
+def make_trafilatura_config():
+    cfg = deepcopy(DEFAULT_CONFIG)
+    cfg["DEFAULT"]["DOWNLOAD_TIMEOUT"] = str(DOWNLOAD_TIMEOUT)
+    cfg["DEFAULT"]["SLEEP_TIME"] = "0"
+    cfg["DEFAULT"]["MAX_REDIRECTS"] = "2"
+    return cfg
+
+
+TRAFILATURA_CONFIG = make_trafilatura_config()
+
 
 def parse_gdelt_events(path):
     records = []
     with open(path, "r", encoding="utf-8", newline="") as f:
-        reader = csv.reader(f, delimiter="\t")
+        reader = csv.reader(f, delimiter=",")
         for row in reader:
             if not row or len(row) < 2:
                 continue
@@ -61,32 +41,21 @@ def parse_gdelt_events(path):
             source_url = row[-1].strip()
             date_added = row[-2].strip() if len(row) >= 2 else None
 
-            if not (source_url.startswith("http://") or source_url.startswith("https://")):
+            if source_url.startswith("[") and "](" in source_url and source_url.endswith(")"):
+                try:
+                    source_url = source_url.split("](", 1)[1][:-1].strip()
+                except Exception:
+                    pass
+
+            if not source_url.startswith(("http://", "https://")):
                 continue
 
             try:
                 num_mentions = int(row[31].strip()) if len(row) > 31 else 0
             except ValueError:
                 num_mentions = 0
+
             if num_mentions < MIN_MENTIONS:
-                continue
-
-            # --- country / geo codes (indices per GDELT 2.0 event file) ---
-            actor1_cc = row[6].strip() if len(row) > 6 else ""
-            actor2_cc = row[16].strip() if len(row) > 16 else ""
-            actor1_geo_cc = row[37].strip() if len(row) > 37 else ""
-            actor2_geo_cc = row[47].strip() if len(row) > 47 else ""
-            action_geo_cc = row[57].strip() if len(row) > 57 else ""
-
-            # keep only events that concern USA
-            concerns_usa = (
-                actor1_cc == "USA" or
-                actor2_cc == "USA" or
-                actor1_geo_cc == "US" or
-                actor2_geo_cc == "US" or
-                action_geo_cc == "US"
-            )
-            if not concerns_usa:
                 continue
 
             records.append({
@@ -95,13 +64,6 @@ def parse_gdelt_events(path):
                 "month_year": row[2].strip() if len(row) > 2 else None,
                 "year": row[3].strip() if len(row) > 3 else None,
                 "fraction_date": row[4].strip() if len(row) > 4 else None,
-
-                "actor1_country": actor1_cc,
-                "actor2_country": actor2_cc,
-                "actor1_geo_country": actor1_geo_cc,
-                "actor2_geo_country": actor2_geo_cc,
-                "action_geo_country": action_geo_cc,
-
                 "event_code": row[26].strip() if len(row) > 26 else None,
                 "event_base_code": row[27].strip() if len(row) > 27 else None,
                 "event_root_code": row[28].strip() if len(row) > 28 else None,
@@ -118,11 +80,21 @@ def parse_gdelt_events(path):
 
 
 def scrape_article(url):
-    downloaded = trafilatura.fetch_url(url)
+    downloaded = trafilatura.fetch_url(url, config=TRAFILATURA_CONFIG)
     if not downloaded:
         return None
+
     meta = trafilatura.extract_metadata(downloaded)
-    text = trafilatura.extract(downloaded, include_comments=False, include_tables=True)
+    text = trafilatura.extract(
+        downloaded,
+        include_comments=False,
+        include_tables=True,
+        config=TRAFILATURA_CONFIG,
+        fast=True,
+    )
+
+    cleaned = text.strip() if text else None
+
     return {
         "final_url": url,
         "domain": urlparse(url).netloc,
@@ -130,43 +102,27 @@ def scrape_article(url):
         "authors": [meta.author] if meta and meta.author else [],
         "published_date": meta.date if meta and meta.date else None,
         "top_image": None,
-        "text": text.strip() if text else None,
-        "status": "success" if text and len(text.strip()) >= MIN_TEXT_LEN else "too_short",
-        "error": None if text else "empty_text",
+        "text": cleaned,
+        "status": "success" if cleaned and len(cleaned) >= MIN_TEXT_LEN else "too_short",
+        "error": None if cleaned else "empty_text",
     }
 
 
 def process_url(url, linked_rows):
-    """
-    Scrape this URL once and return a SINGLE article record.
-    We keep some aggregated info from linked_rows if you want it later.
-    """
     time.sleep(SLEEP_SECONDS)
-    try:
-        article_data = scrape_article(url)
-        if article_data is None:
-            raise RuntimeError("fetch_failed")
+    article_data = scrape_article(url)
+    if article_data is None:
+        raise RuntimeError("fetch_failed")
 
-        # Optional: aggregate metadata from all GDELT rows that pointed to this URL
-        event_ids = [r["global_event_id"] for r in linked_rows]
-        max_mentions = max(r["num_mentions"] for r in linked_rows)
+    event_ids = [r["global_event_id"] for r in linked_rows]
+    max_mentions = max(r["num_mentions"] for r in linked_rows)
 
-        merged = {
-            **article_data,
-            "linked_event_ids": event_ids,     # you can drop this if you don't care
-            "max_num_mentions": max_mentions,  # you can also drop this
-        }
-
-        return merged, None
-
-    except Exception as e:
-        fail = {
-            "source_url": url,
-            "status": "failed",
-            "error": str(e),
-            "linked_event_ids": [r["global_event_id"] for r in linked_rows],
-        }
-        return None, fail
+    merged = {
+        **article_data,
+        "linked_event_ids": event_ids,
+        "max_num_mentions": max_mentions,
+    }
+    return merged, None
 
 
 def run(input_file, output_file, failed_file):
@@ -176,41 +132,79 @@ def run(input_file, output_file, failed_file):
     for row in gdelt_rows:
         grouped_by_url.setdefault(row["source_url"], []).append(row)
 
-    # still prioritize URLs by max num_mentions, but only keep MAX_URLS_PER_DAY unique URLs
     sorted_urls = sorted(
         grouped_by_url.items(),
         key=lambda kv: max(r["num_mentions"] for r in kv[1]),
         reverse=True,
     )[:MAX_URLS_PER_DAY]
 
-    with open(output_file, "a", encoding="utf-8") as out_f, \
-         open(failed_file, "a", encoding="utf-8") as fail_f:
+    print(f"[run] parsed rows: {len(gdelt_rows)} | unique urls: {len(sorted_urls)}")
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {
-                executor.submit(process_url, url, linked_rows): url
-                for url, linked_rows in sorted_urls
-            }
+    out_f = open(output_file, "a", encoding="utf-8")
+    fail_f = open(failed_file, "a", encoding="utf-8")
 
-            for i, future in enumerate(as_completed(futures), start=1):
+    executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
+    futures = {
+        executor.submit(process_url, url, linked_rows): (url, linked_rows)
+        for url, linked_rows in sorted_urls
+    }
+
+    completed = 0
+    batch_start = time.time()
+
+    try:
+        for future in as_completed(futures, timeout=GLOBAL_BATCH_TIMEOUT):
+            url, linked_rows = futures[future]
+            completed += 1
+
+            try:
                 ok_record, fail_record = future.result()
+            except Exception as e:
+                ok_record = None
+                fail_record = {
+                    "source_url": url,
+                    "status": "failed",
+                    "error": str(e),
+                    "linked_event_ids": [r["global_event_id"] for r in linked_rows],
+                }
 
-                if ok_record:
-                    # exactly ONE JSON line per URL
-                    out_f.write(json.dumps(ok_record, ensure_ascii=False) + "\n")
+            if ok_record:
+                out_f.write(json.dumps(ok_record, ensure_ascii=False) + "\n")
 
-                if fail_record:
-                    fail_f.write(json.dumps(fail_record, ensure_ascii=False) + "\n")
+            if fail_record:
+                fail_f.write(json.dumps(fail_record, ensure_ascii=False) + "\n")
 
-                if i % 50 == 0:
-                    out_f.flush()
-                    fail_f.flush()
+            if completed % 20 == 0:
+                out_f.flush()
+                fail_f.flush()
+                elapsed = time.time() - batch_start
+                print(f"[progress] done {completed}/{len(sorted_urls)} in {elapsed:.1f}s")
 
-    ok_count   = sum(1 for l in open(output_file, encoding="utf-8") if l.strip())
+    except TimeoutError:
+        print(f"[timeout] batch exceeded {GLOBAL_BATCH_TIMEOUT}s, forcing shutdown")
+
+        for future, (url, linked_rows) in futures.items():
+            if not future.done():
+                fail_record = {
+                    "source_url": url,
+                    "status": "failed",
+                    "error": f"batch_timeout_{GLOBAL_BATCH_TIMEOUT}s",
+                    "linked_event_ids": [r["global_event_id"] for r in linked_rows],
+                }
+                fail_f.write(json.dumps(fail_record, ensure_ascii=False) + "\n")
+
+    finally:
+        out_f.flush()
+        fail_f.flush()
+        out_f.close()
+        fail_f.close()
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    ok_count = sum(1 for l in open(output_file, encoding="utf-8") if l.strip())
     fail_count = sum(1 for l in open(failed_file, encoding="utf-8") if l.strip())
-    size_mb    = Path(output_file).stat().st_size / 1024 / 1024
-    url_count  = len(sorted_urls)
+    size_mb = Path(output_file).stat().st_size / 1024 / 1024 if Path(output_file).exists() else 0.0
+
     print(
-        f"[scraper] {url_count} URLs -> {ok_count} records / {fail_count} failed, "
+        f"[scraper] {len(sorted_urls)} URLs -> {ok_count} records / {fail_count} failed, "
         f"{size_mb:.1f} MB -> {output_file}"
     )

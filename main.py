@@ -16,7 +16,7 @@ import scraper
 import fetcher
 import market
 import embeder
-from data import build_dataloaders
+from data import build_dataloader
 from model import MarketCNN
 from training import train, validate
 from correlation import run_all
@@ -41,22 +41,22 @@ def main():
     # #fetcher.fetch(output_path=INPUT_FILE) -- stare nie działa
     # market.fetch(end="2026-06-08", output_path=MARKET_FILE)
     
-    RAW_DIR = Path("data/raw")
-    def iter_daily_files(raw_dir: Path = RAW_DIR):
-       yield from sorted(raw_dir.glob("raw_gdelt_*.csv"))
+    # RAW_DIR = Path("data/processed/usa_mentions_csv")
+    # def iter_daily_files(raw_dir: Path = RAW_DIR):
+    #     yield from sorted(raw_dir.glob("*_usa_only.csv"))
     
-    for path in iter_daily_files():
-       scraper.run(path, OUTPUT_FILE, FAILED_FILE)
+    # for path in iter_daily_files():
+    #    scraper.run(path, OUTPUT_FILE, FAILED_FILE)
     
-    embeder.embed_jsonl_file(
-       OUTPUT_FILE,
-       EMBEDED_FILE,
-       embedding_field="embeddinggemma_vec",
-       batch_size=256,
-    )
+    # embeder.embed_jsonl_file(
+    #    OUTPUT_FILE,
+    #    EMBEDED_FILE,
+    #    embedding_field="embeddinggemma_vec",
+    #    batch_size=256,
+    # )
 
 
-    train_loader, test_loader, info = build_dataloaders(
+    train_loader, info = build_dataloader(
         market_path    = MARKET_FILE,
         embedding_path = EMBEDED_FILE,
         embedding_field = EMBEDDING_FIELD
